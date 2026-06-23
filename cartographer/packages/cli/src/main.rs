@@ -55,3 +55,63 @@ fn clone_repo(url: &str, dest: &str) -> Result<PathBuf, git2::Error> {
     eprintln!("Done cloning.");
     Ok(dest_path)
 }
+fn walk_repo(root: &Path) -> Vec<FileEntry> {
+    let mut files = Vec::new(); // create []
+
+    for entry in WalkDir::new(root) //start iterating
+        .into_iter()           //create iterator
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let abs_path = entry.path();
+
+        if is_ignored(abs_path) {
+            continue;
+        }
+
+        // Relative path from repo root
+        let rel_path = abs_path
+            .strip_prefix(root)
+            .unwrap_or(abs_path)
+            .to_string_lossy() //path to string 
+            .to_string();
+
+        let size_bytes = abs_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let language = detect_language(abs_path);
+
+        files.push(FileEntry {
+            path: rel_path,
+            language,
+            size_bytes,
+        });
+    }
+
+    files
+}
+
+fn main() {
+    let args = Args::parse();
+
+    let repo_root = if args.input.starts_with("http://") || args.input.starts_with("https://") {
+        match clone_repo(&args.input, &args.clone_dir) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("Failed to clone: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        PathBuf::from(&args.input)
+    };
+
+    let files = walk_repo(&repo_root);
+
+    let output = serde_json::json!({
+        "repo": args.input,
+        "root": repo_root.to_string_lossy(),
+        "file_count": files.len(),
+        "files": files
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
