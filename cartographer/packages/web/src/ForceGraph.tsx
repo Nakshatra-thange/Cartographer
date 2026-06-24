@@ -8,8 +8,6 @@ interface Props {
   activeCluster: number | null;
 }
 
-// ── Design tokens — matches our PLM aesthetic ─────────────────────────────────
-// Pastel cluster palette with thick black borders
 const CLUSTER_FILLS = [
   "#e8f4e8", // mint
   "#fce8f0", // pink
@@ -129,8 +127,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
           height / 2
         ).strength((d) => isOrphan(d) ? 0.6 : 0)
       );
-
-    // ── Edges ─────────────────────────────────────────────────────────────────
     const linkG = g.append("g");
 
     const link = linkG.selectAll("line")
@@ -141,8 +137,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       .attr("stroke-width", 1.2)
       .attr("marker-end", "url(#arrow)");
 
-    // ── Danger zone pulsing rings ─────────────────────────────────────────────
-    // Drawn BELOW nodes so nodes sit on top
     const dangerNodes = nodes.filter((d) => isDanger(d, maxRisk));
 
     const pulseRing = g.append("g")
@@ -170,8 +164,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       `;
       document.head.appendChild(s);
     }
-
-    // ── Stable core marker (dark solid outer ring) ────────────────────────────
     const stableNodes = nodes.filter((d) => isStable(d, maxRisk) && !isDanger(d, maxRisk));
 
     g.append("g")
@@ -184,7 +176,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       .attr("stroke", "#1a1a1a")
       .attr("stroke-width", 3);
 
-    // ── Nodes ─────────────────────────────────────────────────────────────────
     const nodeG = g.append("g");
 
     const node = nodeG.selectAll<SVGCircleElement, GraphNode>("circle")
@@ -218,8 +209,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
     node.append("title").text((d) =>
       `${d.path}\ncoupling: ${d.coupling}  churn: ${d.churn}  risk: ${d.risk_score}`
     );
-
-    // ── Labels — filename only, for high-coupling nodes ───────────────────────
     const maxCoupling = d3.max(nodes, (d) => d.coupling) ?? 1;
     const labelCutoff = maxCoupling * 0.45;
 
@@ -236,7 +225,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       .attr("dx", (d) => nodeRadius(d) + 5)
       .attr("dy", 4);
 
-    // ── Tick ──────────────────────────────────────────────────────────────────
     sim.on("tick", () => {
       link
         .attr("x1", (d) => (d.source as GraphNode).x ?? 0)
@@ -266,7 +254,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
 
   }, [graph, activeCluster]);
 
-  // Dim non-active clusters via CSS opacity on the SVG groups
   useEffect(() => {
     if (!svgRef.current) return;
     d3.select(svgRef.current)
