@@ -36,8 +36,6 @@ function clusterStroke(id: number) { return CLUSTER_STROKES[id % CLUSTER_STROKES
 function nodeRadius(n: GraphNode): number {
   return Math.max(5, Math.min(22, 5 + n.coupling * 1.8));
 }
-
-// ── Classify nodes ────────────────────────────────────────────────────────────
 function isDanger(n: GraphNode, maxRisk: number)  { return n.risk_score > 0 && n.risk_score >= maxRisk * 0.4; }
 function isStable(n: GraphNode, maxRisk: number)  { return n.coupling >= 3 && n.churn === 0; }
 function isOrphan(n: GraphNode)                   { return n.coupling === 0; }
@@ -88,27 +86,23 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       .attr("fill", "#1a1a1a")
       .attr("fill-opacity", 0.4);
 
-    // Danger pulse marker (pink ring, no blur — matches our no-shadow rule)
     defs.append("marker")
       .attr("id", "danger-ring")
       .attr("viewBox", "-10 -10 20 20")
       .attr("markerWidth", 1).attr("markerHeight", 1);
 
-    // Background grid rect
     svg.append("rect")
       .attr("width", width).attr("height", height)
       .attr("fill", "url(#grid)");
 
     const g = svg.append("g");
 
-    // Zoom + pan
     svg.call(
       d3.zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.08, 5])
         .on("zoom", (e) => g.attr("transform", e.transform))
     );
 
-    // ── Force simulation ──────────────────────────────────────────────────────
     const sim = d3.forceSimulation<GraphNode>(nodes)
       .force("link",
         d3.forceLink<GraphNode, GraphEdge>(edges)
@@ -119,7 +113,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       .force("charge", d3.forceManyBody().strength(-220))
       .force("center", d3.forceCenter(width / 2, height / 2))
       .force("collide", d3.forceCollide<GraphNode>().radius((d) => nodeRadius(d) + 6))
-      // Push orphans to the outer ring
       .force("radial-orphan",
         d3.forceRadial<GraphNode>(
           Math.min(width, height) * 0.42,
@@ -146,11 +139,10 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       .attr("class", "pulse")
       .attr("r", (d) => nodeRadius(d) + 6)
       .attr("fill", "none")
-      .attr("stroke", "#c0748a")       // PLM pink
+      .attr("stroke", "#c0748a")       
       .attr("stroke-width", 2.5)
       .attr("stroke-dasharray", "4 3");
 
-    // CSS keyframe animation for the pulse ring — injected once
     if (!document.getElementById("carto-pulse-style")) {
       const s = document.createElement("style");
       s.id = "carto-pulse-style";
@@ -188,7 +180,6 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       })
       .attr("fill-opacity", (d) => {
         if (isOrphan(d)) return 0.5;
-        // High churn = vivid. No churn = 55%.
         return 0.55 + Math.min(0.45, d.churn * 0.07);
       })
       .attr("stroke", (d) => {
