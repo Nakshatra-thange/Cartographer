@@ -50,6 +50,7 @@ pub struct GraphNode {
     pub coupling: u32,
     /// Pre-computed risk score: churn * coupling. 0 if either is 0.
     pub risk_score: u32,
+    pub commit_days: Vec<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -78,6 +79,7 @@ pub struct Graph {
 struct ChurnEntry {
     commits: u32,
     authors: HashSet<String>,
+    commit_days: Vec<i64>, // unix timestamps of each commit, days-resolution
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -170,6 +172,7 @@ fn parse_churn(repo_path: &Path, history_days: i64) -> HashMap<String, ChurnEntr
 
         commit_count += 1;
         let author = commit.author().email().unwrap_or("unknown").to_string();
+        let commit_day = commit.time().seconds() / 86400;
 
         let tree = match commit.tree() {
             Ok(t) => t,
@@ -189,6 +192,7 @@ fn parse_churn(repo_path: &Path, history_days: i64) -> HashMap<String, ChurnEntr
                 let e = churn.entry(key).or_default();
                 e.commits += 1;
                 e.authors.insert(author.clone());
+                e.commit_days.push(commit_day);
             }
         }
     }
@@ -205,6 +209,7 @@ struct RawFile {
     size_bytes: u64,
     churn: u32,
     authors: u32,
+    commit_days: Vec<i64>,
 }
 
 fn walk_repo(root: &Path, churn: &HashMap<String, ChurnEntry>) -> Vec<RawFile> {
@@ -229,12 +234,19 @@ fn walk_repo(root: &Path, churn: &HashMap<String, ChurnEntry>) -> Vec<RawFile> {
         let size_bytes = abs.metadata().map(|m| m.len()).unwrap_or(0);
         let language = detect_language(abs).to_string();
 
-        let (churn_count, author_count) = churn
-            .get(&rel)
-            .map(|e| (e.commits, e.authors.len() as u32))
-            .unwrap_or((0, 0));
+        let (churn_count, author_count, commit_days) = churn
+    .get(&rel)
+    .map(|e| (e.commits, e.authors.len() as u32, e.commit_days.clone()))
+    .unwrap_or((0, 0, vec![]));
 
-        files.push(RawFile { path: rel, language, size_bytes, churn: churn_count, authors: author_count });
+files.push(RawFile {
+    path: rel,
+    language,
+    size_bytes,
+    churn: churn_count,
+    authors: author_count,
+    commit_days,
+});
     }
 
     files
@@ -302,6 +314,7 @@ fn main() {
                 out_degree: outd,
                 coupling,
                 risk_score,
+                commit_days: f.commit_days,
             }
         })
         .collect();
