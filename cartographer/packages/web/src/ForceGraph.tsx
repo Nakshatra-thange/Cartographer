@@ -6,6 +6,8 @@ interface Props {
   graph: Graph;
   onNodeClick: (node: GraphNode) => void;
   activeCluster: number | null;
+  matchedIds: Set<string>;          // ← new
+  highlightedIds: Set<string>;      // ← new
 }
 
 const CLUSTER_FILLS = [
@@ -37,10 +39,10 @@ function nodeRadius(n: GraphNode): number {
   return Math.max(5, Math.min(22, 5 + n.coupling * 1.8));
 }
 function isDanger(n: GraphNode, maxRisk: number)  { return n.risk_score > 0 && n.risk_score >= maxRisk * 0.4; }
-function isStable(n: GraphNode, maxRisk: number)  { return n.coupling >= 3 && n.churn === 0; }
+function isStable(n: GraphNode)                   { return n.coupling >= 3 && n.churn === 0; }
 function isOrphan(n: GraphNode)                   { return n.coupling === 0; }
 
-export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props) {
+export default function ForceGraph({ graph, onNodeClick, activeCluster, matchedIds, highlightedIds }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -52,7 +54,8 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
     d3.select(svgRef.current).selectAll("*").remove();
 
     const nodes: GraphNode[] = graph.nodes.map((n) => ({ ...n }));
-    const edges: GraphEdge[] = graph.edges.map((e) => ({ ...e, source: e.from, target: e.to }));
+    type SimEdge = GraphEdge & { source: string | GraphNode; target: string | GraphNode };
+    const edges: SimEdge[] = graph.edges.map((e) => ({ ...e, source: e.from, target: e.to }));
 
     const maxRisk = d3.max(nodes, (d) => d.risk_score) ?? 1;
 
@@ -105,7 +108,7 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
 
     const sim = d3.forceSimulation<GraphNode>(nodes)
       .force("link",
-        d3.forceLink<GraphNode, GraphEdge>(edges)
+        d3.forceLink<GraphNode, SimEdge>(edges)
           .id((d) => d.id)
           .distance(90)
           .strength(0.25)
@@ -156,7 +159,7 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
       `;
       document.head.appendChild(s);
     }
-    const stableNodes = nodes.filter((d) => isStable(d, maxRisk) && !isDanger(d, maxRisk));
+    const stableNodes = nodes.filter((d) => isStable(d) && !isDanger(d, maxRisk));
 
     g.append("g")
       .selectAll("circle.stable")
@@ -254,6 +257,27 @@ export default function ForceGraph({ graph, onNodeClick, activeCluster }: Props)
         return d.cluster_id === activeCluster ? 1 : 0.12;
       });
   }, [activeCluster]);
+
+  // Dim nodes that don't match current filters
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const allFiltered = matchedIds.size === 0;
+
+    d3.select(svgRef.current)
+      .selectAll<SVGCircleElement, GraphNode>("circle[r]")
+      .attr("opacity", (d) => {
+        if (!d?.id) return 1;
+        if (allFiltered) return 1;
+        if (!matchedIds.has(d.id)) return 0.08;
+        return 1;
+      })
+      .attr("stroke-width", (d) => {
+        if (!d?.id) return 2;
+        if (highlightedIds.has(d.id)) return 4;     // search highlight pulse
+        if (d.risk_score > 2) return 3;
+        return 2;
+      });
+  }, [matchedIds, highlightedIds]);
 
   return (
     <svg

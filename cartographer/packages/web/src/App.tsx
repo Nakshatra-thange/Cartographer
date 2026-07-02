@@ -2,7 +2,9 @@ import { useState, useMemo } from "react";
 import { useGraph } from "./useGraph";
 import ForceGraph from "./ForceGraph";
 import type { GraphNode, Graph } from "./types";
-
+import FilterBar from "./FilterBar";
+import { useFilter } from "./useFilter";
+import NodePanel from "./NodePanel";
 // ── Cluster panel helpers ─────────────────────────────────────────────────────
 
 const CLUSTER_FILLS = [
@@ -54,6 +56,9 @@ export default function App() {
     () => state.status === "done" ? summariseClusters(state.graph) : [],
     [state]
   );
+  const { controls, matchedIds, highlightedIds } = useFilter(
+    state.status === "done" ? state.graph : null
+  );
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -102,6 +107,14 @@ export default function App() {
           {["Coupling analysis","·","Churn detection","·","Semantic clustering","·","Danger zones","·","Git history","·","Static call graph","·","Coupling analysis","·","Churn detection","·","Semantic clustering","·","Danger zones","·","Git history","·","Static call graph","·"].map((t, i) => <span key={i}>{t}</span>)}
         </div>
       </div>
+
+      {state.status === "done" && (
+        <FilterBar
+          controls={controls}
+          graph={state.graph}
+          matchCount={matchedIds.size}
+        />
+      )}
 
       {/* ── Main area ── */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -192,6 +205,8 @@ export default function App() {
               graph={state.graph}
               onNodeClick={setSelected}
               activeCluster={activeCluster}
+              matchedIds={matchedIds}
+              highlightedIds={highlightedIds}
             />
           )}
 
@@ -211,57 +226,12 @@ export default function App() {
         </div>
 
         {/* ── Node detail panel — right ── */}
-        {selected && (
-          <div style={{ width: 260, borderLeft: "2.5px solid #1a1a1a", background: "#faf9f6", overflowY: "auto", flexShrink: 0 }}>
-            <div style={{ padding: "14px 18px", borderBottom: "2px solid #1a1a1a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontFamily: "'Playfair Display', serif", fontWeight: 900, fontSize: 15 }}>File detail</span>
-              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#888" }}>✕</button>
-            </div>
-
-            {selected.risk_score > 2 && (
-              <div style={{ margin: "14px 16px 0" }}>
-                <span style={{ fontSize: 11, fontWeight: 700, background: "#fce8f0", border: "2px solid #c0748a", borderRadius: 999, padding: "4px 12px", color: "#8c3a5a" }}>
-                  ⚠ Danger zone · risk {selected.risk_score}
-                </span>
-              </div>
-            )}
-
-            {selected.churn === 0 && selected.coupling >= 3 && (
-              <div style={{ margin: "14px 16px 0" }}>
-                <span style={{ fontSize: 11, fontWeight: 700, background: "#e8f4e8", border: "2px solid #2d6e2d", borderRadius: 999, padding: "4px 12px", color: "#2d6e2d" }}>
-                  Stable core
-                </span>
-              </div>
-            )}
-
-            {selected.coupling === 0 && (
-              <div style={{ margin: "14px 16px 0" }}>
-                <span style={{ fontSize: 11, fontWeight: 700, background: "#f1efe8", border: "2px solid #aaa", borderRadius: 999, padding: "4px 12px", color: "#666" }}>
-                  Orphan — no connections
-                </span>
-              </div>
-            )}
-
-            <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
-              {([
-                ["Path",        selected.path],
-                ["Language",    selected.language],
-                ["Cluster",     selected.cluster_label],
-                ["Coupling",    String(selected.coupling)],
-                ["In-degree",   String(selected.in_degree)],
-                ["Out-degree",  String(selected.out_degree)],
-                ["Churn",       String(selected.churn)],
-                ["Authors",     String(selected.authors)],
-                ["Risk score",  String(selected.risk_score)],
-                ["Size",        `${(selected.size_bytes / 1024).toFixed(1)} KB`],
-              ] as [string, string][]).map(([label, value]) => (
-                <div key={label}>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#aaa", marginBottom: 3 }}>{label}</div>
-                  <div style={{ fontSize: 13, color: "#1a1a1a", wordBreak: "break-all", fontWeight: 600 }}>{value}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {selected && state.status === "done" && (
+          <NodePanel
+            node={selected}
+            graph={state.graph}
+            onClose={() => setSelected(null)}
+          />
         )}
       </div>
 
