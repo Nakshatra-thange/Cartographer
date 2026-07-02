@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { getGraph } from "./graph";
 import { explainNode } from "./explain";
 import { registerStream } from "./progress";
+import { getCachedLabels } from "./label-cluster";
 dotenv.config();
 
 const app  = express();
@@ -55,6 +56,19 @@ app.get("/api/graph", async (req: Request, res: Response) => {
     res.json(graph);
   } catch (err: any) {
     console.error("Build failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.get("/api/labels", async (req: Request, res: Response) => {
+  const repo = req.query.repo as string;
+  if (!repo) { res.status(400).json({ error: "Missing ?repo=" }); return; }
+
+  try {
+    const labels = await getCachedLabels(repo);
+    res.json(labels ?? []);
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });

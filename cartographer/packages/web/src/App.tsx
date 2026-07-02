@@ -8,6 +8,7 @@ import ProgressLoader from "./ProgressLoader";
 import MiniMap from "./MiniMap";
 import { useFilter } from "./useFilter";
 import type { GraphNode, Graph } from "./types";
+import { useClusterLabels } from "./useClusterLabels";
 
 const CLUSTER_FILLS   = ["#e8f4e8","#fce8f0","#fef9d7","#e8eefa","#fde8d8","#e8f7fa","#f0e8fa","#e8faf0"];
 const CLUSTER_STROKES = ["#2d6e2d","#8c3a5a","#8c7a00","#3a5a8c","#8c5a2d","#2d6e8c","#6e2d8c","#2d8c6e"];
@@ -49,6 +50,10 @@ export default function App() {
   const { controls, matchedIds, highlightedIds } = useFilter(
     state.status === "done" ? state.graph : null
   );
+
+  const clusterLabels = useClusterLabels(repo);
+
+
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -131,7 +136,10 @@ export default function App() {
 
             <div style={{ padding:"8px 10px", display:"flex", flexDirection:"column", gap:6 }}>
               {clusters.map((c) => (
-                <button key={c.id} onClick={() => toggleCluster(c.id)} style={{
+                <button key={c.id} 
+                onClick={() => toggleCluster(c.id)} 
+                title={clusterLabels.get(c.id)?.summary ?? ""}
+                style={{
                   width:"100%", textAlign:"left", cursor:"pointer",
                   background: activeCluster === c.id ? clusterFill(c.id) : "white",
                   border:`2.5px solid ${activeCluster === c.id ? clusterStroke(c.id) : "#e5e0d8"}`,
@@ -140,7 +148,9 @@ export default function App() {
                 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
                     <span style={{ width:9, height:9, borderRadius:"50%", background:clusterFill(c.id), border:`2px solid ${clusterStroke(c.id)}`, display:"inline-block", flexShrink:0 }} />
-                    <span style={{ fontSize:12, fontWeight:700, color:"#1a1a1a" }}>{c.label}</span>
+                    <span style={{ fontSize:12, fontWeight:700, color:"#1a1a1a" }}>
+  {clusterLabels.get(c.id)?.label ?? c.label}
+</span>
                   </div>
                   <div style={{ fontSize:11, color:"#888", paddingLeft:17 }}>{c.count} files</div>
                   {c.maxRisk > 2 && (
@@ -198,7 +208,7 @@ export default function App() {
               {/* Active cluster overlay pill */}
               {activeCluster !== null && (
                 <div style={{ position:"absolute", top:14, left:"50%", transform:"translateX(-50%)", background:clusterFill(activeCluster), border:`2.5px solid ${clusterStroke(activeCluster)}`, borderRadius:999, padding:"6px 18px", fontSize:12, fontWeight:700, color:"#1a1a1a", pointerEvents:"none" }}>
-                  {clusters.find((c) => c.id === activeCluster)?.label} — {clusters.find((c) => c.id === activeCluster)?.count} files
+ {clusterLabels.get(activeCluster)?.label ?? clusters.find((c) => c.id === activeCluster)?.label} — {clusters.find((c) => c.id === activeCluster)?.count} files
                 </div>
               )}
             </>

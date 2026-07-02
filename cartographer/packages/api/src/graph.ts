@@ -6,7 +6,7 @@ import { clusterRepo, ClusterResult } from "./cluster";
 import { ensureSchema } from "./db";
 import { getCachedGraph, setCachedGraph, getCacheKey } from "./cache";
 import { emit } from "./progress";
-
+import { labelClusters } from "./label-cluster";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface GraphNode {
@@ -141,16 +141,71 @@ async function buildGraph(repo: string, cacheKey: string): Promise<Graph> {
   emit(repo, { step: "embedding", message: "Embedding source files...", percent: 50 });
   await embedRepo(out, CLONE_DIR);
 
-  // ── Cluster ───────────────────────────────────────────────────────────────
-  emit(repo, { step: "clustering", message: "Clustering by semantics...", percent: 80 });
-  const clusters = await clusterRepo(repo);
+// ── Cluster ───────────────────────────────────────────────────────────────
+emit(repo, { step: "clustering", message: "Clustering by semantics...", percent: 75 });
+const clusters = await clusterRepo(repo);
 
-  // ── Merge ─────────────────────────────────────────────────────────────────
-  const graph = mergeGraph(out, clusters);
+// ── Label clusters with LLM ───────────────────────────────────────────────
+emit(repo, { step: "clustering", message: "Naming clusters...", percent: 88 });
+
+// Write a temporary graph with cluster IDs so labelClusters can read it
+const tempGraph = mergeGraphRaw(out, clusters);
+const tempPath  = out.replace(".json", "-tmp.json");
+fs.writeFileSync(tempPath, JSON.stringify(tempGraph));
+
+const clusterLabels = await labelClusters(repo, tempPath);
+
+// ── Merge everything ──────────────────────────────────────────────────────
+const graph = mergeGraphWithLabels(out, clusters, clusterLabels);
 
   // ── Cache ─────────────────────────────────────────────────────────────────
   await setCachedGraph(cacheKey, JSON.stringify(graph));
   emit(repo, { step: "done", message: "Map ready.", percent: 100 });
 
   return graph;
+}
+
+// ── Raw merge (cluster IDs only, no labels yet) ───────────────────────────────
+function mergeGraphRaw(outPath: string, clusters: ClusterResult[]): any {
+  const raw        = JSON.parse(fs.readFileSync(outPath, "utf-8"));
+  const clusterMap = new Map(clusters.map((c) => [c.path, c.cluster_id]));
+
+  return {
+    ...raw,
+    nodes: raw.nodes.map((n: any) => ({
+      ...n,
+      cluster_id:    clusterMap.get(n.path) ?? -1,
+      cluster_label: `Cluster ${clusterMap.get(n.path) ?? "?"}`,
+    })),
+  };
+}
+
+// ── Full merge with LLM-generated labels ──────────────────────────────────────
+function mergeGraphWithLabels(
+  outPath:       string,
+  clusters:      ClusterResult[],
+  clusterLabels: Array<{ cluster_id: number; label: string; summary: string }>
+): Graph {
+  const raw        = JSON.parse(fs.readFileSync(outPath, "utf-8"));
+  const clusterMap = new Map(clusters.map((c) => [c.path, c.cluster_id]));
+  const labelMap   = new Map(clusterLabels.map((l) => [l.cluster_id, l.label]));
+
+  const nodes: GraphNode[] = raw.nodes.map((n: any) => {
+    const cid = clusterMap.get(n.path) ?? -1;
+    return {
+      ...n,
+      cluster_id:    cid,
+      cluster_label: labelMap.get(cid) ?? `Cluster ${cid}`,
+    };
+  });
+
+  return {
+    repo:         raw.repo,
+    generated_at: raw.generated_at,
+    history_days: raw.history_days,
+    node_count:   nodes.length,
+    edge_count:   raw.edges.length,
+    nodes,
+    edges:        raw.edges,
+  };
 }
