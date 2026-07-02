@@ -1,29 +1,47 @@
 import express, { Request, Response } from "express";
 import dotenv from "dotenv";
 import { getGraph } from "./graph";
+import { registerStream } from "./progress";
 dotenv.config();
 
 const app  = express();
 const PORT = Number(process.env.PORT ?? 3001);
 
 app.use(express.json());
-
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+app.use((_, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin",  "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   next();
 });
 
+// ── Health ────────────────────────────────────────────────────────────────────
 
-app.get("/health", (_req: Request, res: Response) => {
-  res.json({ ok: true, ts: Date.now() });
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
 });
 
+// ── SSE progress stream ───────────────────────────────────────────────────────
+//
+// GET /api/progress?repo=...
+//
+// Client subscribes here BEFORE calling /api/graph.
+// Events: { step, message, percent }
 
+app.get("/api/progress", (req: Request, res: Response) => {
+  const repo = req.query.repo as string;
+  if (!repo) { res.status(400).end(); return; }
+  registerStream(repo, res);
+});
+
+// ── Graph endpoint ────────────────────────────────────────────────────────────
+//
+// GET /api/graph?repo=...
+//
+// Triggers the build pipeline. Progress events flow over /api/progress.
+// Returns the full graph JSON when done.
 
 app.get("/api/graph", async (req: Request, res: Response) => {
   const repo = req.query.repo as string;
-
   if (!repo || !repo.startsWith("http")) {
     res.status(400).json({ error: "Missing or invalid ?repo= parameter" });
     return;
@@ -35,14 +53,11 @@ app.get("/api/graph", async (req: Request, res: Response) => {
     const graph = await getGraph(repo);
     res.json(graph);
   } catch (err: any) {
-    console.error("Failed to build graph:", err.message);
+    console.error("Build failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-
-
 app.listen(PORT, () => {
-  console.log(`\nCartographer API running on http://localhost:${PORT}`);
-  console.log(`Try: curl "http://localhost:${PORT}/api/graph?repo=https://github.com/expressjs/express"\n`);
+  console.log(`\nCartographer API → http://localhost:${PORT}\n`);
 });

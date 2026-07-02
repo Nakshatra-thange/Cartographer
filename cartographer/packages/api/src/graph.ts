@@ -4,6 +4,8 @@ import * as child_process from "child_process";
 import { embedRepo } from "./embeddings";
 import { clusterRepo, ClusterResult } from "./cluster";
 import { ensureSchema } from "./db";
+import { getCachedGraph, setCachedGraph, getCacheKey } from "./cache";
+import { emit } from "./progress";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -18,8 +20,9 @@ export interface GraphNode {
   out_degree: number;
   coupling: number;
   risk_score: number;
-  cluster_id: number;   // added by Day 6
-  cluster_label: string; // placeholder — filled by LLM in Week 3
+  commit_days: number[];
+  cluster_id: number;
+  cluster_label: string;
 }
 
 export interface GraphEdge {
@@ -40,22 +43,19 @@ export interface Graph {
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
-const TMP_DIR    = "/tmp/cartographer";
-const CLONE_DIR  = "/tmp/cartographer-repo";
-const CLI_PATH   = path.resolve(__dirname, "../../cli/target/debug/cartographer-cli");
+const TMP_DIR   = "/tmp/cartographer";
+const CLONE_DIR = "/tmp/cartographer-repo";
+const CLI_PATH  = path.resolve(__dirname, "../../cli/target/debug/cartographer-cli");
 
 function graphPath(repo: string): string {
-  // Safe filename from repo URL
   const safe = repo.replace(/[^a-zA-Z0-9]/g, "_");
   return path.join(TMP_DIR, `${safe}.json`);
 }
 
-// ── Step 1: Run Rust CLI ──────────────────────────────────────────────────────
+// ── Step 1: Rust CLI ──────────────────────────────────────────────────────────
 
 function runCli(repo: string, outPath: string): void {
   fs.mkdirSync(TMP_DIR, { recursive: true });
-
-  console.log("[1/3] Running Rust CLI...");
 
   const result = child_process.spawnSync(
     CLI_PATH,
@@ -63,80 +63,94 @@ function runCli(repo: string, outPath: string): void {
     { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }
   );
 
-  // CLI writes progress to stderr, graph JSON to the --out file
   if (result.stderr) process.stderr.write(result.stderr);
-
-  if (result.status !== 0) {
-    throw new Error(`CLI exited with code ${result.status}: ${result.stderr}`);
-  }
-
-  if (!fs.existsSync(outPath)) {
-    throw new Error(`CLI did not produce output file at ${outPath}`);
-  }
+  if (result.status !== 0) throw new Error(`CLI failed (code ${result.status})`);
+  if (!fs.existsSync(outPath)) throw new Error("CLI produced no output file");
 }
 
-// ── Step 2: Embed + cluster ───────────────────────────────────────────────────
-
-async function embedAndCluster(
-  repo: string,
-  outPath: string
-): Promise<ClusterResult[]> {
-  console.log("[2/3] Embedding files...");
-  await embedRepo(outPath, CLONE_DIR);
-
-  console.log("[3/3] Clustering...");
-  return clusterRepo(repo);
-}
-
-// ── Step 3: Merge cluster IDs into graph nodes ────────────────────────────────
+// ── Step 2: Merge clusters into graph ────────────────────────────────────────
 
 function mergeGraph(outPath: string, clusters: ClusterResult[]): Graph {
   const raw = JSON.parse(fs.readFileSync(outPath, "utf-8"));
-
-  // Build lookup: path → cluster_id
-  const clusterMap = new Map<string, number>(
-    clusters.map((c) => [c.path, c.cluster_id])
-  );
+  const clusterMap = new Map(clusters.map((c) => [c.path, c.cluster_id]));
 
   const nodes: GraphNode[] = raw.nodes.map((n: any) => ({
     ...n,
     cluster_id:    clusterMap.get(n.path) ?? -1,
-    cluster_label: `Cluster ${clusterMap.get(n.path) ?? "?"}`, // Week 3 replaces this
+    cluster_label: `Cluster ${clusterMap.get(n.path) ?? "?"}`,
   }));
 
   return {
-    repo:          raw.repo,
-    generated_at:  raw.generated_at,
-    history_days:  raw.history_days,
-    node_count:    nodes.length,
-    edge_count:    raw.edges.length,
+    repo:         raw.repo,
+    generated_at: raw.generated_at,
+    history_days: raw.history_days,
+    node_count:   nodes.length,
+    edge_count:   raw.edges.length,
     nodes,
-    edges:         raw.edges,
+    edges:        raw.edges,
   };
 }
 
+// ── In-flight deduplication ───────────────────────────────────────────────────
+// If two requests come in for the same repo while it's building,
+// don't run the pipeline twice — return the same promise.
+
+const inFlight = new Map<string, Promise<Graph>>();
+
 // ── Public: build or return cached graph ──────────────────────────────────────
 
-// Simple in-memory cache keyed by repo URL.
-// Day 13 replaces this with Redis keyed by repo + latest commit SHA.
-const cache = new Map<string, { graph: Graph; builtAt: number }>();
-const CACHE_TTL_MS = 1000 * 60 * 30; // 30 minutes
-
 export async function getGraph(repo: string): Promise<Graph> {
-  const cached = cache.get(repo);
-  if (cached && Date.now() - cached.builtAt < CACHE_TTL_MS) {
-    console.log(`[cache] Returning cached graph for ${repo}`);
-    return cached.graph;
+  // 1. Check Redis cache first
+  const cacheKey = await getCacheKey(repo);
+  const cached   = await getCachedGraph(cacheKey);
+
+  if (cached) {
+    console.log(`[cache] HIT for ${repo}`);
+    emit(repo, { step: "done", message: "Loaded from cache", percent: 100 });
+    return JSON.parse(cached);
   }
 
-  await ensureSchema();
+  // 2. If already building, return same promise
+  if (inFlight.has(repo)) {
+    console.log(`[build] Already in flight for ${repo}`);
+    return inFlight.get(repo)!;
+  }
 
+  // 3. Build
+  const promise = buildGraph(repo, cacheKey);
+  inFlight.set(repo, promise);
+
+  promise.finally(() => inFlight.delete(repo));
+
+  return promise;
+}
+
+async function buildGraph(repo: string, cacheKey: string): Promise<Graph> {
+  await ensureSchema();
   const out = graphPath(repo);
 
+  // ── Clone + parse ──────────────────────────────────────────────────────────
+  emit(repo, { step: "cloning", message: "Cloning repository...", percent: 5 });
   runCli(repo, out);
-  const clusters = await embedAndCluster(repo, out);
+  emit(repo, { step: "parsing", message: "Parsing call graph + git history...", percent: 30 });
+
+  // Small delay so the client sees the parsing step
+  await new Promise((r) => setTimeout(r, 300));
+
+  // ── Embed ──────────────────────────────────────────────────────────────────
+  emit(repo, { step: "embedding", message: "Embedding source files...", percent: 50 });
+  await embedRepo(out, CLONE_DIR);
+
+  // ── Cluster ───────────────────────────────────────────────────────────────
+  emit(repo, { step: "clustering", message: "Clustering by semantics...", percent: 80 });
+  const clusters = await clusterRepo(repo);
+
+  // ── Merge ─────────────────────────────────────────────────────────────────
   const graph = mergeGraph(out, clusters);
 
-  cache.set(repo, { graph, builtAt: Date.now() });
+  // ── Cache ─────────────────────────────────────────────────────────────────
+  await setCachedGraph(cacheKey, JSON.stringify(graph));
+  emit(repo, { step: "done", message: "Map ready.", percent: 100 });
+
   return graph;
 }
