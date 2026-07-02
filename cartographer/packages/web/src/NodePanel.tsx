@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { GraphNode, Graph } from "./types";
 import Sparkline from "./Sparkline";
+import { useExplanation } from "./useExplanation";
 
 interface Props {
   node: GraphNode;
@@ -42,6 +43,7 @@ function FileChip({ path, note }: { path: string; note?: string }) {
 export default function NodePanel({ node, graph, onClose }: Props) {
   // Derive importers (files that import this node) and imports (files this node imports)
   const { importers, imports } = useMemo(() => {
+    
     const importers = graph.edges
       .filter((e) => e.to === node.id)
       .map((e) => e.from)
@@ -54,6 +56,7 @@ export default function NodePanel({ node, graph, onClose }: Props) {
 
     return { importers, imports };
   }, [node.id, graph.edges]);
+  const explainState = useExplanation(node, graph);
 
   const isDanger = node.risk_score > 2;
   const isStable = node.churn === 0 && node.coupling >= 3;
@@ -114,6 +117,61 @@ export default function NodePanel({ node, graph, onClose }: Props) {
             <span>today</span>
           </div>
         </div>
+
+        {/* ── AI Explanation ── */}
+<div style={{ marginBottom: 18 }}>
+  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#aaa", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+    AI explanation
+    {explainState.status === "done" && explainState.explanation.cached && (
+      <span style={{ fontSize: 9, background: "#e8f4e8", border: "1.5px solid #2d6e2d", borderRadius: 999, padding: "1px 7px", color: "#2d6e2d", fontWeight: 700, textTransform: "uppercase" }}>
+        cached
+      </span>
+    )}
+  </div>
+
+  {explainState.status === "idle" && (
+    <div style={{ fontSize: 12, color: "#bbb", fontStyle: "italic" }}>Click a node to load explanation.</div>
+  )}
+
+  {explainState.status === "loading" && (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      {["What it does", "Why it exists", "What breaks", "Risk level"].map((label) => (
+        <div key={label}>
+          <div style={{ fontSize: 10, color: "#ccc", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 3 }}>{label}</div>
+          <div style={{ height: 12, background: "#f0ede8", borderRadius: 4, width: `${60 + Math.random() * 30}%`, animation: "shimmer 1.4s ease-in-out infinite" }} />
+        </div>
+      ))}
+    </div>
+  )}
+
+  {explainState.status === "error" && (
+    <div style={{ fontSize: 12, color: "#c0748a", background: "#fce8f0", border: "1.5px solid #c0748a", borderRadius: 8, padding: "8px 10px" }}>
+      {explainState.message}
+    </div>
+  )}
+
+  {explainState.status === "done" && (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {([
+        ["What it does", explainState.explanation.what,   "#e8eefa", "#3a5a8c"],
+        ["Why it exists", explainState.explanation.why,   "#fef9d7", "#8c7a00"],
+        ["What breaks",   explainState.explanation.breaks,"#fce8f0", "#8c3a5a"],
+        ["Risk level",    explainState.explanation.risk,
+          node.risk_score > 2 ? "#fce8f0" : "#e8f4e8",
+          node.risk_score > 2 ? "#8c3a5a" : "#2d6e2d"],
+      ] as [string, string, string, string][]).map(([label, text, bg, border]) => (
+        <div key={label} style={{ background: bg, border: `1.5px solid ${border}`, borderRadius: 10, padding: "9px 11px" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: border, marginBottom: 4 }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 12, color: "#1a1a1a", lineHeight: 1.6 }}>
+            {text}
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+</div>
 
         {/* ── Core metrics ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>

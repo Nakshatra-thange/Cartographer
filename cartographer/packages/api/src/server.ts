@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import dotenv from "dotenv";
 import { getGraph } from "./graph";
+import { explainNode } from "./explain";
 import { registerStream } from "./progress";
 dotenv.config();
 
@@ -54,6 +55,23 @@ app.get("/api/graph", async (req: Request, res: Response) => {
     res.json(graph);
   } catch (err: any) {
     console.error("Build failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/explain", async (req: Request, res: Response) => {
+  const ctx = req.body;
+
+  if (!ctx?.path || !ctx?.language) {
+    res.status(400).json({ error: "Missing required fields: path, language" });
+    return;
+  }
+
+  try {
+    const explanation = await explainNode(ctx);
+    res.json(explanation);
+  } catch (err: any) {
+    console.error("Explain failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
